@@ -25,11 +25,11 @@ the same predecessor when decremented:
 
 All characters between consecutive alphabet members decrement to the same
 predecessor. For example:
-- b", b#, b\*, b+, b, all have predecessor `\~.b!\~` (all chars 0x22-0x2C -> !)
-- b/, b. would have predecessor `\~.b-\~` (chars 0x2E-0x2F -> -)
-- b:, b;, b@, b^ all have predecessor `\~.b9\~` (chars 0x3A-0x5E -> 9)
-- b\`, has predecessor `\~.b_\~` (char 0x60 -> \_)
-- b{, b|, b} all have predecessor `\~.bz\~` (chars 0x7B-0x7D -> z)
+- b" b# b\* b+ b all have predecessor `\~.b!\~` (all chars 0x22-0x2C -> !)
+- b/ b. would have predecessor `\~.b-\~` (chars 0x2E-0x2F -> -)
+- b: b; b@ b^ all have predecessor `\~.b9\~` (chars 0x3A-0x5E -> 9)
+- b\` has predecessor `\~.b_\~` (char 0x60 -> \_)
+- b{ b| b} all have predecessor `\~.bz\~` (chars 0x7B-0x7D -> z)
 
 ### Deduced Alphabet (ordered)
 
