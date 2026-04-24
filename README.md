@@ -1,5 +1,14 @@
 # Analysis of UltraDNS Minimally Covering NSEC Algorithm
 
+## Background
+
+UltraDNS, a commercial DNS provider, uses a variant of Minimally
+Covered NSEC records in their DNSSEC implementation described in
+RFC 4470 ( https://datatracker.ietf.org/doc/html/rfc4470 ). This
+excercise tries to reverse engineer the UltraDNS epsilon function
+used to compute the NSEC precedecessor and successor names they
+use.
+
 ## Character Alphabet
 
 From the decrement observations, we can deduce the character set used by
