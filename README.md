@@ -100,25 +100,6 @@ NXNAME), and AWS Route53 (without NXNAME).
 ./detect_compact_nsec.py [--doh] [-v] --known-nxd NAME ZONE
 ```
 
-## Utilities
-
-- [sortdomainnames.py](sortdomainnames.py) — Sort domain names in DNS
-  canonical order (RFC 4034 Section 6.1). Reads from a file, stdin, or
-  command-line arguments (`-a`).
-
-## Zone Data
-
-- [zone.ultratest.txt](zone.ultratest.txt) — UltraDNS test zone with
-  various name types (leaves, ENT, wildcard under subdomain).
-- [zone.ultratest2.txt](zone.ultratest2.txt) — UltraDNS test zone with
-  deeper hierarchy and apex wildcard, used to verify variable-depth
-  predecessor behavior.
-- [zone.nseczone.huque.com.txt](zone.nseczone.huque.com.txt) — Static
-  NSEC zone used as a control for testing the generalized detector.
-- [cdoe-cloudflare.txt](cdoe-cloudflare.txt) — Cloudflare zones for
-  CDoE testing.
-- [cdoe-ns1.txt](cdoe-ns1.txt) — NS1 zones for CDoE testing.
-
 ## Dependencies
 
 - Python 3
