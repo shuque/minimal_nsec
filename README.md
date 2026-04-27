@@ -3,8 +3,9 @@
 This project investigates minimally covering NSEC records (RFC 4470) —
 also known as "white lies" — as deployed by commercial DNS providers.
 The work includes reverse-engineering UltraDNS's specific epsilon
-function implementation, and developing a generalized approach to
-detect minimally covering NSEC records from any provider.
+function implementation, developing a generalized approach to detect
+minimally covering NSEC records from any provider, and detecting
+Compact Denial of Existence (RFC 9824).
 
 ## Background
 
@@ -69,6 +70,36 @@ specific epsilon algorithm.
 ./detect_minimal_nsec.py calc ZONE OWNER NEXT --qname QNAME
 ```
 
+## Compact Denial of Existence (RFC 9824)
+
+Compact Denial of Existence is a different approach to authenticated
+denial in DNSSEC. Instead of generating epsilon predecessor/successor
+names, the server returns NOERROR (rather than NXDOMAIN) for
+nonexistent names, with an NSEC record of the form
+`qname NSEC \000.qname`. This single NSEC covers only the queried
+name, without revealing any other names in the zone. Implementations
+that fully support RFC 9824 include the NXNAME meta-type (TYPE128) in
+the NSEC type bitmap to signal that the name does not exist; some
+implementations omit NXNAME.
+
+### CDoE Detector
+
+[detect\_compact\_nsec.py](detect_compact_nsec.py) — Detects Compact
+Denial of Existence by probing for the CDoE NSEC pattern and checking
+for the NXNAME signal. Tested against Cloudflare, NS1 (both with
+NXNAME), and AWS Route53 (without NXNAME).
+
+```
+# Probe one or more zones
+./detect_compact_nsec.py [--doh] [-v] [-n NUM] ZONE [ZONE ...]
+
+# Read zones from a file
+./detect_compact_nsec.py [--doh] [-v] -f FILE
+
+# Bypass apex wildcard by probing under a known nonexistent name
+./detect_compact_nsec.py [--doh] [-v] --known-nxd NAME ZONE
+```
+
 ## Utilities
 
 - [sortdomainnames.py](sortdomainnames.py) — Sort domain names in DNS
@@ -84,6 +115,9 @@ specific epsilon algorithm.
   predecessor behavior.
 - [zone.nseczone.huque.com.txt](zone.nseczone.huque.com.txt) — Static
   NSEC zone used as a control for testing the generalized detector.
+- [cdoe-cloudflare.txt](cdoe-cloudflare.txt) — Cloudflare zones for
+  CDoE testing.
+- [cdoe-ns1.txt](cdoe-ns1.txt) — NS1 zones for CDoE testing.
 
 ## Dependencies
 
