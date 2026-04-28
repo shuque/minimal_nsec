@@ -4,8 +4,9 @@ This project investigates minimally covering NSEC records (RFC 4470) —
 also known as "white lies" — as deployed by commercial DNS providers.
 The work includes reverse-engineering UltraDNS's specific epsilon
 function implementation, developing a generalized approach to detect
-minimally covering NSEC records from any provider, and detecting
-Compact Denial of Existence (RFC 9824).
+minimally covering NSEC records from any provider, detecting Compact
+Denial of Existence (RFC 9824), and classifying NSEC3 zones as
+traditional (pre-computed) or white lies (RFC 7129).
 
 ## Background
 
@@ -98,6 +99,53 @@ NXNAME), and AWS Route53 (without NXNAME).
 
 # Bypass apex wildcard by probing under a known nonexistent name
 ./detect_compact_nsec.py [--doh] [-v] --known-nxd NAME ZONE
+```
+
+## NSEC3 Detection (RFC 5155 / RFC 7129 / RFC 9824)
+
+Detects whether a zone uses traditional (pre-computed) NSEC3, NSEC3
+White Lies (online-signed, RFC 7129 Appendix B), or Compact Denial of
+Existence with NSEC3 (RFC 9824 Section 4).
+
+**Traditional vs White Lies**: Probes the zone with random nonexistent
+names, computes expected NSEC3 hashes using `dns.dnssec.nsec3_hash()`,
+and measures the gap between NSEC3 owner and next hashed owner. White
+lies produce a gap of exactly 2 (H-1 to H+1) for covering records and
+1 for the closest encloser match; pre-computed chains produce gaps
+proportional to 1/N of the hash space (typically 0.1%–1.7%). The
+detector analyzes all three closest-encloser-proof roles: next closer
+name (NCN) cover, closest encloser (CE) match, and wildcard (WC) cover.
+
+**Compact Denial of Existence with NSEC3**: Detected when probes
+return NOERROR with no answer data (NODATA) and the NSEC3 type bitmap
+is minimal — empty, or containing only NXNAME (TYPE128). Reports
+whether NXNAME is present.
+
+**Salt rotation handling**: NSEC3 parameters (salt, iterations) are
+extracted from the NSEC3 records in each individual response, not from
+the NSEC3PARAM RR, which can be stale or absent with online signers.
+
+**Wildcard zones**: Wildcard-synthesized NOERROR responses include an
+NSEC3 record in the authority section covering the next closer name;
+the detector extracts and analyzes these.
+
+### NSEC3 Detector
+
+[detect\_nsec3.py](detect_nsec3.py) — Detects traditional NSEC3,
+NSEC3 white lies, and CDoE/NSEC3 with hash gap analysis. Tested
+against huque.com (traditional, BIND 9), naomi.huque.com (white lies),
+noire.huque.com (CDoE/NSEC3 with NXNAME), and third-party zones with
+rotating salts and wildcards.
+
+```
+# Probe one or more zones
+./detect_nsec3.py [--doh] [-v] [-n NUM] ZONE [ZONE ...]
+
+# Read zones from a file
+./detect_nsec3.py [--doh] [-v] -f FILE
+
+# Relaxed white lies detection (allow gap up to 2*N for covers)
+./detect_nsec3.py [--doh] --epsilon N ZONE
 ```
 
 ## Dependencies
