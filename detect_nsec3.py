@@ -37,14 +37,14 @@ NXNAME_TYPE = 128
 B32HEX_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
 
 
-def query_dns(qname, rdtype, doh_url=None):
+def query_dns(qname, rdtype, doh_url=None, resolver_ip=None):
     """Send a DNS query and return the response."""
     q = dns.message.make_query(qname, rdtype, want_dnssec=True)
     q.flags |= dns.flags.AD
     if doh_url:
         return dns.query.https(q, doh_url)
-    resolver = dns.resolver.Resolver()
-    return dns.query.udp(q, resolver.nameservers[0])
+    nameserver = resolver_ip or dns.resolver.Resolver().nameservers[0]
+    return dns.query.udp(q, nameserver)
 
 
 def random_label(length=10):
@@ -93,9 +93,9 @@ def gap_description(gap):
     return f"{gap} ({pct:.2e}%)"
 
 
-def check_dnssec_enabled(zone_name, doh_url):
+def check_dnssec_enabled(zone_name, doh_url, resolver_ip=None):
     """Verify the zone has DNSSEC by looking for RRSIG in a SOA response."""
-    response = query_dns(zone_name, "SOA", doh_url)
+    response = query_dns(zone_name, "SOA", doh_url, resolver_ip)
     if response.rcode() != dns.rcode.NOERROR:
         return False, "SOA query failed"
     has_rrsig = any(
@@ -106,10 +106,10 @@ def check_dnssec_enabled(zone_name, doh_url):
     return True, "DNSSEC enabled"
 
 
-def get_nsec3param(zone_name, doh_url):
+def get_nsec3param(zone_name, doh_url, resolver_ip=None):
     """Fetch the NSEC3PARAM record for a zone.
     Returns (algorithm, flags, iterations, salt_hex) or None."""
-    response = query_dns(zone_name, "NSEC3PARAM", doh_url)
+    response = query_dns(zone_name, "NSEC3PARAM", doh_url, resolver_ip)
     for rrset in response.answer:
         if rrset.rdtype == dns.rdatatype.NSEC3PARAM:
             for rdata in rrset:
@@ -240,7 +240,8 @@ def classify_nsec3(qname, zone, nsec3_records, salt_hex, iterations,
     return result
 
 
-def probe_zone(zone_name, doh_url, num_queries=5, verbose=False):
+def probe_zone(zone_name, doh_url, num_queries=5, verbose=False,
+               resolver_ip=None):
     """Probe the zone with random queries and classify NSEC3 responses.
     Extracts NSEC3 parameters (salt, iterations) from each response's
     NSEC3 records rather than relying on a fixed salt, since some zones
@@ -253,7 +254,7 @@ def probe_zone(zone_name, doh_url, num_queries=5, verbose=False):
     for i in range(num_queries):
         label = random_label(8 + i)
         qname = dns.name.from_text(f"{label}.{zone_name}")
-        response = query_dns(qname, "A", doh_url)
+        response = query_dns(qname, "A", doh_url, resolver_ip)
         rcode = response.rcode()
 
         nsec3_recs = get_nsec3_records(response)
@@ -324,24 +325,25 @@ def probe_zone(zone_name, doh_url, num_queries=5, verbose=False):
     return results, cdoe_results
 
 
-def detect(zone_str, doh_url=None, num_queries=5, verbose=False, epsilon=None):
+def detect(zone_str, doh_url=None, num_queries=5, verbose=False, epsilon=None,
+           resolver_ip=None):
     """Main detection routine."""
     zone_name = dns.name.from_text(zone_str)
     print(f"\nAnalyzing zone: {zone_name}")
     print("=" * 70)
 
     print("\n[1] Checking DNSSEC...")
-    enabled, msg = check_dnssec_enabled(zone_name, doh_url)
+    enabled, msg = check_dnssec_enabled(zone_name, doh_url, resolver_ip)
     print(f"    {msg}")
     if not enabled:
         print("\nResult: INCONCLUSIVE -- DNSSEC not available")
         return None
 
     print("\n[2] Checking for NSEC3...")
-    params = get_nsec3param(zone_name, doh_url)
+    params = get_nsec3param(zone_name, doh_url, resolver_ip)
     if not params:
         test_name = dns.name.from_text(f"{random_label()}.{zone_name}")
-        response = query_dns(test_name, "A", doh_url)
+        response = query_dns(test_name, "A", doh_url, resolver_ip)
         has_nsec = any(
             rrset.rdtype == dns.rdatatype.NSEC
             for rrset in response.authority
@@ -358,7 +360,8 @@ def detect(zone_str, doh_url=None, num_queries=5, verbose=False, epsilon=None):
           f"iterations {iterations}, salt {salt_hex}")
 
     print(f"\n[3] Probing with {num_queries} random queries...")
-    results, cdoe_results = probe_zone(zone_name, doh_url, num_queries, verbose)
+    results, cdoe_results = probe_zone(zone_name, doh_url, num_queries,
+                                         verbose, resolver_ip)
 
     if cdoe_results and not results:
         nxname_count = sum(1 for r in cdoe_results if r['has_nxname'])
@@ -470,15 +473,21 @@ def main():
                         "(default: 1, strict RFC 7129)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show per-query details")
-    parser.add_argument("--doh", action="store_true",
-                        help="Use DNS-over-HTTPS (default: Cloudflare)")
-    parser.add_argument("--doh-server", metavar="URL",
-                        help="DoH server URL (implies --doh)")
+    transport = parser.add_mutually_exclusive_group()
+    transport.add_argument("--doh", action="store_true",
+                           help="Use DNS-over-HTTPS (default: Cloudflare)")
+    transport.add_argument("--doh-server", metavar="URL",
+                           help="DoH server URL (implies --doh)")
+    transport.add_argument("--resolver", metavar="IP",
+                           help="Use this resolver IP address instead of system default")
     args = parser.parse_args()
 
     doh_url = None
+    resolver_ip = None
     if args.doh or args.doh_server:
         doh_url = args.doh_server or DEFAULT_DOH_URL
+    elif args.resolver:
+        resolver_ip = args.resolver
 
     zones = list(args.zones)
     if args.file:
@@ -496,7 +505,7 @@ def main():
             zone += '.'
         try:
             detect(zone, doh_url, args.num_queries, args.verbose,
-                   args.epsilon)
+                   args.epsilon, resolver_ip)
         except Exception as e:
             print(f"\nError analyzing {zone}: {e}", file=sys.stderr)
 

@@ -121,14 +121,14 @@ def resolve_name(text, zone_str):
     return dns.name.from_text(text)
 
 
-def query_dns(qname, rdtype, doh_url=None):
+def query_dns(qname, rdtype, doh_url=None, resolver_ip=None):
     """Send a DNS query and return the response."""
     q = dns.message.make_query(qname, rdtype, want_dnssec=True)
     q.flags |= dns.flags.AD
     if doh_url:
         return dns.query.https(q, doh_url)
-    resolver = dns.resolver.Resolver()
-    return dns.query.udp(q, resolver.nameservers[0])
+    nameserver = resolver_ip or dns.resolver.Resolver().nameservers[0]
+    return dns.query.udp(q, nameserver)
 
 
 def find_covering_nsec(qname, response, zone):
@@ -235,7 +235,8 @@ def analyze_nsec(qname, owner, next_name, zone):
     }
 
 
-def probe_zone(zone_str, doh_url=None, num_queries=5, verbose=False):
+def probe_zone(zone_str, doh_url=None, num_queries=5, verbose=False,
+               resolver_ip=None):
     """Query a zone for NSEC records and analyze them."""
     zone = dns.name.from_text(zone_str)
     results = []
@@ -244,7 +245,7 @@ def probe_zone(zone_str, doh_url=None, num_queries=5, verbose=False):
         label = ''.join(random.choice(string.ascii_lowercase)
                         for _ in range(8 + i))
         qname = dns.name.from_text(f"{label}.{zone_str}")
-        response = query_dns(qname, "A", doh_url)
+        response = query_dns(qname, "A", doh_url, resolver_ip)
 
         q_label = get_outermost_label(qname, zone)
         best = None
@@ -340,8 +341,11 @@ def cmd_probe(args):
         zone_str += '.'
 
     doh_url = None
+    resolver_ip = None
     if args.doh or args.doh_server:
         doh_url = args.doh_server or DEFAULT_DOH_URL
+    elif args.resolver:
+        resolver_ip = args.resolver
 
     max_bits = max_label_distance_bits()
 
@@ -349,7 +353,7 @@ def cmd_probe(args):
     print(f"{'=' * 70}")
 
     results = probe_zone(zone_str, doh_url, args.num_queries,
-                         verbose=args.verbose)
+                         verbose=args.verbose, resolver_ip=resolver_ip)
 
     if not results:
         print("No NSEC records found (zone may use NSEC3)")
@@ -419,10 +423,13 @@ def main():
                          help="Number of queries (default: 5)")
     probe_p.add_argument("-v", "--verbose", action="store_true",
                          help="Show skipped NSEC pairs")
-    probe_p.add_argument("--doh", action="store_true",
-                         help="Use DNS-over-HTTPS (Cloudflare)")
-    probe_p.add_argument("--doh-server", metavar="URL",
-                         help="DoH server URL (implies --doh)")
+    transport = probe_p.add_mutually_exclusive_group()
+    transport.add_argument("--doh", action="store_true",
+                           help="Use DNS-over-HTTPS (Cloudflare)")
+    transport.add_argument("--doh-server", metavar="URL",
+                           help="DoH server URL (implies --doh)")
+    transport.add_argument("--resolver", metavar="IP",
+                           help="Use this resolver IP address instead of system default")
 
     args = parser.parse_args()
 

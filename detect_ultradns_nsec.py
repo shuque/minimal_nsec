@@ -26,6 +26,7 @@ DEFAULT_DOH_URL = "https://cloudflare-dns.com/dns-query"
 
 QUERY_MODE = "local"
 DOH_URL = DEFAULT_DOH_URL
+RESOLVER_IP = None
 
 ULTRADNS_ALPHABET = "!-0123456789_abcdefghijklmnopqrstuvwxyz~"
 
@@ -41,6 +42,8 @@ def query_dns(qname, rdtype, want_dnssec=True):
     q.flags |= dns.flags.AD
     if QUERY_MODE == "doh":
         return dns.query.https(q, DOH_URL)
+    elif RESOLVER_IP:
+        return dns.query.udp(q, RESOLVER_IP)
     else:
         resolver = dns.resolver.Resolver()
         nameserver = resolver.nameservers[0]
@@ -325,17 +328,22 @@ def main():
     parser.add_argument("zone", help="DNS zone name to analyze")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show detailed NSEC analysis")
-    parser.add_argument("--doh", action="store_true",
-                        help="Use DNS-over-HTTPS (default server: Cloudflare)")
-    parser.add_argument("--doh-server", metavar="URL",
-                        help="DoH server URL (implies --doh)")
+    transport = parser.add_mutually_exclusive_group()
+    transport.add_argument("--doh", action="store_true",
+                           help="Use DNS-over-HTTPS (default server: Cloudflare)")
+    transport.add_argument("--doh-server", metavar="URL",
+                           help="DoH server URL (implies --doh)")
+    transport.add_argument("--resolver", metavar="IP",
+                           help="Use this resolver IP address instead of system default")
     args = parser.parse_args()
 
-    global QUERY_MODE, DOH_URL
+    global QUERY_MODE, DOH_URL, RESOLVER_IP
     if args.doh or args.doh_server:
         QUERY_MODE = "doh"
         if args.doh_server:
             DOH_URL = args.doh_server
+    elif args.resolver:
+        RESOLVER_IP = args.resolver
 
     zone = args.zone
     if not zone.endswith('.'):

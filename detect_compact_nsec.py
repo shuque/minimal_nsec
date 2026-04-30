@@ -31,14 +31,14 @@ DEFAULT_DOH_URL = "https://cloudflare-dns.com/dns-query"
 NXNAME_RRTYPE = 128
 
 
-def query_dns(qname, rdtype, doh_url=None):
+def query_dns(qname, rdtype, doh_url=None, resolver_ip=None):
     """Send a DNS query and return the response."""
     q = dns.message.make_query(qname, rdtype, want_dnssec=True)
     q.flags |= dns.flags.AD
     if doh_url:
         return dns.query.https(q, doh_url)
-    resolver = dns.resolver.Resolver()
-    return dns.query.udp(q, resolver.nameservers[0])
+    nameserver = resolver_ip or dns.resolver.Resolver().nameservers[0]
+    return dns.query.udp(q, nameserver)
 
 
 def random_label(length=10):
@@ -91,9 +91,9 @@ def check_cdoe_nsec(name, rrset, rdata):
     return True, NXNAME_RRTYPE in types, types
 
 
-def check_dnssec_enabled(zone_name, doh_url):
+def check_dnssec_enabled(zone_name, doh_url, resolver_ip=None):
     """Verify the zone has DNSSEC by looking for RRSIG in a SOA response."""
-    response = query_dns(zone_name, "SOA", doh_url)
+    response = query_dns(zone_name, "SOA", doh_url, resolver_ip)
     if response.rcode() != dns.rcode.NOERROR:
         return False, "SOA query failed"
     has_rrsig = any(
@@ -104,10 +104,10 @@ def check_dnssec_enabled(zone_name, doh_url):
     return True, "DNSSEC enabled"
 
 
-def check_for_nsec3(zone_name, doh_url):
+def check_for_nsec3(zone_name, doh_url, resolver_ip=None):
     """Check if the zone uses NSEC3 instead of NSEC."""
     test_name = dns.name.from_text(f"{random_label()}.{zone_name}")
-    response = query_dns(test_name, "A", doh_url)
+    response = query_dns(test_name, "A", doh_url, resolver_ip)
     for rrset in response.authority:
         if rrset.rdtype == dns.rdatatype.NSEC3:
             return True
@@ -115,7 +115,7 @@ def check_for_nsec3(zone_name, doh_url):
 
 
 def probe_nxdomain(zone_name, doh_url, num_queries=5, verbose=False,
-                   nxname_parent=None):
+                   nxname_parent=None, resolver_ip=None):
     """
     Query for random nonexistent names and check for the CDoE pattern:
     NOERROR rcode, NSEC owner = qname, next = \\000.qname.
@@ -140,7 +140,7 @@ def probe_nxdomain(zone_name, doh_url, num_queries=5, verbose=False,
     for i in range(num_queries):
         label = random_label(8 + i)
         qname = dns.name.from_text(f"{label}.{parent}")
-        response = query_dns(qname, "A", doh_url)
+        response = query_dns(qname, "A", doh_url, resolver_ip)
         rcode = response.rcode()
 
         if rcode == dns.rcode.NOERROR and len(response.answer) > 0:
@@ -199,7 +199,7 @@ def probe_nxdomain(zone_name, doh_url, num_queries=5, verbose=False,
     return pattern_matches, nxname_matches, total_usable, details, has_wildcard
 
 
-def probe_nodata(zone_name, doh_url, verbose=False):
+def probe_nodata(zone_name, doh_url, verbose=False, resolver_ip=None):
     """
     Check apex NODATA: query zone apex for a type unlikely to exist (LOC).
     CDoE zones return NSEC: apex -> \\000.apex with the real type bitmap
@@ -207,7 +207,7 @@ def probe_nodata(zone_name, doh_url, verbose=False):
 
     Returns (is_cdoe, detail_string).
     """
-    response = query_dns(zone_name, "LOC", doh_url)
+    response = query_dns(zone_name, "LOC", doh_url, resolver_ip)
     rcode = response.rcode()
 
     if rcode != dns.rcode.NOERROR:
@@ -239,7 +239,7 @@ def probe_nodata(zone_name, doh_url, verbose=False):
 
 
 def detect(zone_str, doh_url=None, num_queries=5, verbose=False,
-           nxname_parent=None):
+           nxname_parent=None, resolver_ip=None):
     """
     Main detection routine.
     Returns True (detected), False (not detected), or None (inconclusive).
@@ -249,14 +249,14 @@ def detect(zone_str, doh_url=None, num_queries=5, verbose=False,
     print("=" * 60)
 
     print("\n[1] Checking DNSSEC...")
-    enabled, msg = check_dnssec_enabled(zone_name, doh_url)
+    enabled, msg = check_dnssec_enabled(zone_name, doh_url, resolver_ip)
     print(f"    {msg}")
     if not enabled:
         print("\nResult: INCONCLUSIVE -- DNSSEC not available")
         return None
 
     print("\n[2] Checking denial-of-existence method...")
-    if check_for_nsec3(zone_name, doh_url):
+    if check_for_nsec3(zone_name, doh_url, resolver_ip):
         print("    Zone uses NSEC3")
         print("\nResult: NOT CDoE (zone uses NSEC3)")
         return False
@@ -271,7 +271,7 @@ def detect(zone_str, doh_url=None, num_queries=5, verbose=False,
     else:
         print("\n[3] Probing for CDoE pattern (nonexistent names)...")
     pattern, nxname, total, details, has_wildcard = probe_nxdomain(
-        zone_name, doh_url, num_queries, verbose, nxparent)
+        zone_name, doh_url, num_queries, verbose, nxparent, resolver_ip)
     for d in details:
         print(d)
     if has_wildcard and total == 0 and not nxparent:
@@ -281,7 +281,8 @@ def detect(zone_str, doh_url=None, num_queries=5, verbose=False,
         print(f"    With NXNAME:   {nxname}/{total}")
 
     print("\n[4] Checking apex NODATA...")
-    nodata_cdoe, nodata_msg = probe_nodata(zone_name, doh_url, verbose)
+    nodata_cdoe, nodata_msg = probe_nodata(zone_name, doh_url, verbose,
+                                              resolver_ip)
     print(f"    {nodata_msg}")
 
     print(f"\n{'=' * 60}")
@@ -339,15 +340,21 @@ def main():
                         "(bypasses apex wildcard)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show per-query details")
-    parser.add_argument("--doh", action="store_true",
-                        help="Use DNS-over-HTTPS (default: Cloudflare)")
-    parser.add_argument("--doh-server", metavar="URL",
-                        help="DoH server URL (implies --doh)")
+    transport = parser.add_mutually_exclusive_group()
+    transport.add_argument("--doh", action="store_true",
+                           help="Use DNS-over-HTTPS (default: Cloudflare)")
+    transport.add_argument("--doh-server", metavar="URL",
+                           help="DoH server URL (implies --doh)")
+    transport.add_argument("--resolver", metavar="IP",
+                           help="Use this resolver IP address instead of system default")
     args = parser.parse_args()
 
     doh_url = None
+    resolver_ip = None
     if args.doh or args.doh_server:
         doh_url = args.doh_server or DEFAULT_DOH_URL
+    elif args.resolver:
+        resolver_ip = args.resolver
 
     zones = list(args.zones)
     if args.file:
@@ -367,7 +374,8 @@ def main():
         if nxname and not nxname.endswith('.'):
             nxname += '.'
         try:
-            detect(zone, doh_url, args.num_queries, args.verbose, nxname)
+            detect(zone, doh_url, args.num_queries, args.verbose, nxname,
+                   resolver_ip)
         except Exception as e:
             print(f"\nError analyzing {zone}: {e}", file=sys.stderr)
 
